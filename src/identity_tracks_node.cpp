@@ -18,11 +18,13 @@ class tracks{
         void find_base_pre();
         Point2i find_base(int);
         bool slide_window(Point2i pix,bool flag);
+        Mat polyfit(vector<Point>& in_point, int n);
         VideoCapture capture;
         Mat frame;
         Mat frame_gray;//灰度图
         Mat frame_gauss;//高斯平滑1图
         Mat frame_sobel,frame_sobel2;//sobel算子
+        Mat frame_laplac;
         Mat roi;
         vector<vector<Point> > contour;
         vector<Point> pts;
@@ -50,7 +52,7 @@ void tracks::find_base_pre(){
             vector<int> left_white_pix,right_white_pix;
             left_white_pix.clear();
             right_white_pix.clear();
-            cout << "left:" << endl;
+           // cout << "left:" << endl;
             for(int i = 630;i < 640;i++){
                 int left_num = 0;
                 for(int j = 680; j<712 ;j++){
@@ -58,11 +60,11 @@ void tracks::find_base_pre(){
                         left_num++;
                     }
                 }
-                cout << "i="<<i <<"->"<< left_num << " ";
+              //  cout << "i="<<i <<"->"<< left_num << " ";
                 left_white_pix.push_back(left_num);
             }
-            cout << endl;
-            cout << "right:"<< endl;
+          //  cout << endl;
+           // cout << "right:"<< endl;
             for(int i = 640;i < 650;i++){
                 int right_num = 0;
                 for(int j = 680; j<712 ;j++){
@@ -70,10 +72,10 @@ void tracks::find_base_pre(){
                         right_num++;
                     }
                 }
-                cout << "i=" <<i<<"->"<<right_num;
+                //cout << "i=" <<i<<"->"<<right_num;
                 right_white_pix.push_back(right_num);
             }
-            cout << endl;
+           // cout << endl;
             std::vector<int>::iterator left_biggest = std::max_element(std::begin(left_white_pix),std::end(left_white_pix));
             std::vector<int>::iterator right_biggest = std::max_element(std::begin(right_white_pix),std::end(right_white_pix));
             img_init = true;
@@ -110,7 +112,7 @@ bool tracks::slide_window(Point2i pix,bool flag){
     vector<Point2i> ppp;
     Point2i basep(0,0),sump(0,0);
     ppp.clear();
-    if(pix.y < 500) return false;
+    if(pix.y < 480) return false;
     for(int a =0;a <=4;a++){
         for(int b = -10;b <=10;b++){
             Point2i new_pix(pix.x+b,pix.y - a);
@@ -119,13 +121,13 @@ bool tracks::slide_window(Point2i pix,bool flag){
             }
         }
     }
-    if(ppp.size() == 0) return false;//如果窗口内无白点则返回
+    if(ppp.size() <= 1) return false;//如果窗口内无白点则返回
     for(int i = 0;i < ppp.size();i++){
         sump += ppp[i];
     }
     basep.x = sump.x / ppp.size();
     basep.y = pix.y -4;
-    circle(frame,basep,1,Scalar(255,255,255));
+    circle(frame,basep,1,Scalar(0,255,0));
     if(flag == left_flag)
     left_edge.push_back(basep);
     else 
@@ -133,6 +135,37 @@ bool tracks::slide_window(Point2i pix,bool flag){
 
     slide_window(basep,flag);
     return 0;
+}
+Mat polyfit(vector<Point2i> in_point, int n){
+    for(int i = 0;i < in_point.size();i++){
+        int tmp;
+        tmp = in_point[i].x;
+        in_point[i].x = in_point[i].y;
+        in_point[i].y = tmp;
+    }
+    int size = in_point.size();
+	//所求未知数个数
+	int x_num = n + 1;
+	//构造矩阵U和Y
+	Mat mat_u(size, x_num, CV_64F);
+	Mat mat_y(size, 1, CV_64F);
+ 
+	for (int i = 0; i < mat_u.rows; ++i)
+		for (int j = 0; j < mat_u.cols; ++j)
+		{
+			mat_u.at<double>(i, j) = pow(in_point[i].x, j);
+		}
+ 
+	for (int i = 0; i < mat_y.rows; ++i)
+	{
+		mat_y.at<double>(i, 0) = in_point[i].y;
+	}
+ 
+	//矩阵运算，获得系数矩阵K
+	Mat mat_k(x_num, 1, CV_64F);
+	mat_k = (mat_u.t()*mat_u).inv()*mat_u.t()*mat_y;
+	cout << mat_k << endl;
+	return mat_k;
 }
 int main(int argc,char *argv[])
 {
@@ -145,7 +178,8 @@ int main(int argc,char *argv[])
     }
     namedWindow("video_src",CV_WINDOW_AUTOSIZE);
     namedWindow("video_deal",CV_WINDOW_AUTOSIZE);
-    namedWindow("video_lone",CV_WINDOW_AUTOSIZE);
+    namedWindow("video_sobel",CV_WINDOW_AUTOSIZE);
+    namedWindow("video_roi",CV_WINDOW_AUTOSIZE);
     namedWindow("warp",CV_WINDOW_AUTOSIZE);
     ros::Rate rate(30);
     while(idol.capture.read(idol.frame) && ros::ok() ){
@@ -155,9 +189,7 @@ int main(int argc,char *argv[])
         GaussianBlur(idol.frame_gray,idol.frame_gauss,cv::Size(3,3),5);
         /*边缘检测*/
         Sobel(idol.frame_gauss,idol.frame_sobel,idol.frame_gauss.depth(),1,0);
-        cv::inRange(idol.frame_sobel,90,255,idol.frame_sobel2);
-       // Mat frame_canny;
-       // Canny(frame_sobel,frame_canny,100,200,3);
+        cv::inRange(idol.frame_sobel,50,255,idol.frame_sobel2);
         /*选取roi区域*/
         idol.roi = Mat::zeros(idol.frame_sobel.size(),CV_8U);
         drawContours(idol.roi,idol.contour,0,Scalar::all(255),-1);   
@@ -211,7 +243,6 @@ int main(int argc,char *argv[])
         Mat warp_matrix = cv::getPerspectiveTransform(srcQuad,dstQuad);
         idol.frame_warp = cv::Mat::zeros(idol.frame_lone.size(),idol.frame_lone.type());
         warpPerspective(idol.frame_lone_dil,idol.frame_warp,warp_matrix,idol.frame_warp.size());
-        imshow("warp",idol.frame_warp);
         /*搜索轨道预起始点*/
         idol.find_base_pre();
         /*搜索轨道起始点*/
@@ -224,13 +255,46 @@ int main(int argc,char *argv[])
         idol.right_edge.clear();
         idol.slide_window(idol.left_base,idol.left_flag);
         idol.slide_window(idol.right_base,idol.right_flag);
+        if(idol.left_edge.size() < 20|| idol.right_edge.size()<20){
         cout << "left edge size:" << idol.left_edge.size()
              << "right edge size:" << idol.right_edge.size()
              << endl;
+        }
+        /*拟合曲线*/
+        /* int iter = 5;
+	    Mat mat_l = polyfit(idol.left_edge, iter);
+        for (int i = 480; i <= 710; ++i)
+	    {
+		    Point2d ipt;
+		    ipt.y = i;
+		    ipt.x = 0;
+		    for (int j = 0; j < n + 1; ++j)
+		    {
+			ipt.x += mat_l.at<double>(j, 0)*pow(i,j);
+		    }
+		    circle(idol.frame, ipt, 1, Scalar(0, 0, 255));
+	    }
+        Mat mat_r = polyfit(idol.right_edge, iter);
+        for (int i = 480; i <= 710; ++i)
+	    {
+		    Point2d ipt;
+		    ipt.y = i;
+		    ipt.x = 0;
+		    for (int j = 0; j < n + 1; ++j)
+		    {
+			ipt.x += mat_r.at<double>(j, 0)*pow(i,j);
+		    }
+		    circle(idol.frame, ipt, 1, Scalar(0, 0, 255));
+	    }
+
         /*显示原始图像*/
         imshow("video_src",idol.frame);
+        /*显示sobel区域图像*/
+        imshow("video_sobel",idol.frame_sobel);
         /*显示roi区域图像*/
-        imshow("video_lone",idol.frame_roi);
+        imshow("video_roi",idol.frame_roi);
+        /*显示投影图像*/
+        imshow("warp",idol.frame_warp);
         /*显示最终图像*/
         imshow("video_deal",idol.frame_lone);
         waitKey(1);
